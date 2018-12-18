@@ -3,25 +3,12 @@
 //TODO add instance set function and constructor
 //TODO test compile to all variants
 
-#define DBGPRNT     Serial.print ("State value (HAL_SD_STATE...): "); \
-                    Serial.println (hsd.State, HEX); \
-                    Serial.print ("Errorcode value (HAL_SD_ERROR...): "); \
-                    Serial.println (hsd.ErrorCode, HEX); \
-                    Serial.print ("R1 value: "); \
-                    Serial.println (hsd.Instance->RESP1, BIN); \
-                    Serial.print ("HAL Return value (HAL_...): "); \
-                    Serial.println (state, HEX);\
-                    Serial.println (__FILE__);\
-                    Serial.println (__LINE__);\
-                    Serial.println (__func__);
+#include "Arduino.h"
 
-
-#include "stm32_gpio_af.h"
 #include "SDIO.h"
 
 #include "stm32_dma.h"
 
-#include "Arduino.h"
 
 static SDIOClass *_sdio_this;
 
@@ -101,9 +88,28 @@ uint8_t SDIOClass::begin() {
     _sdio_this = this;
 
     __HAL_RCC_SDIO_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
 
-    stm32AfSDIO4BitInit(SDIO, NULL, 0, NULL, 0,
-            NULL, 0, NULL, 0, NULL, 0, NULL, 0);
+    GPIO_InitTypeDef GPIO_InitStruct;
+
+    GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_11
+                              |GPIO_PIN_12;
+	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+	GPIO_InitStruct.Alternate = GPIO_AF12_SDIO;
+	HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+	GPIO_InitStruct.Pin = GPIO_PIN_2;
+	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+	GPIO_InitStruct.Alternate = GPIO_AF12_SDIO;
+	HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+	__HAL_RCC_SDMMC1_FORCE_RESET();
+	__HAL_RCC_SDMMC1_RELEASE_RESET();
 
     hsd.Instance = SDIO;
     hsd.Init.ClockEdge = SDIO_CLOCK_EDGE_RISING;
@@ -122,7 +128,6 @@ uint8_t SDIOClass::begin() {
 
     state = HAL_SD_ConfigWideBusOperation(&hsd, SDIO_BUS_WIDE_4B);
     if (state != HAL_OK) {
-        DBGPRNT;
         return false;
     }
 
@@ -177,7 +182,6 @@ uint8_t SDIOClass::readBlocks(uint32_t block, uint8_t* dst, size_t nb) {
         state = HAL_SD_ReadBlocks(&hsd, dst, block, nb, (uint32_t)sd_timeout);
 
         if (state != HAL_OK) {
-            DBGPRNT;
             return false;
         }
 
@@ -191,7 +195,6 @@ uint8_t SDIOClass::readBlocks(uint32_t block, uint8_t* dst, size_t nb) {
         }
         state = HAL_SD_ReadBlocks_DMA(&hsd, dst, block, nb);
         if (state != HAL_OK) {
-            DBGPRNT;
             return false;
         }
         // We need to block here, until we implement a callback feature
@@ -201,21 +204,14 @@ uint8_t SDIOClass::readBlocks(uint32_t block, uint8_t* dst, size_t nb) {
             {
                 /* Abort transfer and send return error */
                 HAL_SD_Abort(&hsd);
-                DBGPRNT;
-                Serial.print ("Timeout on Read, over ");
-                Serial.print (sdRdTimeout * nb);
-                Serial.println ("ms");
                 return false;
             }
         }
         if (hsd.State != HAL_SD_STATE_READY ) {
-            DBGPRNT;
             return false;
         }
         if (__HAL_SD_GET_FLAG(&hsd,SDIO_FLAG_DCRCFAIL)) {
            //return false;
-            DBGPRNT;
-            Serial.println ("CRC error on read");
             while (1); //stay here
         }
     }
@@ -229,7 +225,6 @@ uint8_t SDIOClass::writeBlocks(uint32_t block, const uint8_t* src, size_t nb) {
     while (!(cardStatus() & SDCARD_STATUS_READY_BIT)) {
         SDMMC_CmdStopTransfer(hsd.Instance);
         if ((HAL_GetTick() - tickstart) > sdBsyTimeout) {
-            DBGPRNT;
             return false;
         }
         yield();
@@ -248,7 +243,6 @@ uint8_t SDIOClass::writeBlocks(uint32_t block, const uint8_t* src, size_t nb) {
         state = HAL_SD_WriteBlocks(&hsd,(uint8_t*) src, block, (uint32_t) nb, sd_timeout);
 
         if (state != HAL_OK) {
-            DBGPRNT;
             return false;
         }
 //common with dma, so it's down at the end
@@ -261,7 +255,6 @@ uint8_t SDIOClass::writeBlocks(uint32_t block, const uint8_t* src, size_t nb) {
         }
         state = HAL_SD_WriteBlocks_DMA(&hsd, (uint8_t*)src, block, nb);
         if (state != HAL_OK) {
-            DBGPRNT;
             return false;
         }
         /*
@@ -277,22 +270,15 @@ uint8_t SDIOClass::writeBlocks(uint32_t block, const uint8_t* src, size_t nb) {
             {
                 /* Abort transfer and send return error */
                 HAL_SD_Abort(&hsd);
-                DBGPRNT;
-                Serial.print ("Timeout on write, over ");
-                Serial.print (sdWrTimeout * (nb+1));
-                Serial.println ("ms");
                 return false;
             }
         }
         if (hsd.State != HAL_SD_STATE_READY) {
-            DBGPRNT;
             return false;
         }
     }
     if (__HAL_SD_GET_FLAG(&hsd,SDIO_FLAG_DCRCFAIL)) {
        //return false;
-        DBGPRNT;
-        Serial.println ("CRC failed on Write");
         while (1); //stay here
     }
         while (HAL_SD_GetCardState(&hsd) == HAL_SD_CARD_PROGRAMMING);
@@ -303,7 +289,6 @@ bool SDIOClass::erase(uint32_t firstBlock, uint32_t lastBlock) {
     state = HAL_SD_Erase(&hsd, (uint64_t)firstBlock, (uint64_t)lastBlock);
 
     if (state != HAL_OK) {
-        DBGPRNT;
         return false;
     }
     return HAL_SD_GetCardState(&hsd) == HAL_SD_CARD_TRANSFER;

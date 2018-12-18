@@ -1,6 +1,7 @@
 #ifndef _SDIO_H_INCLUDED
 #define _SDIO_H_INCLUDED
 
+#include "Arduino.h"
 #include "stdint.h"
 #include "stm32_def.h"
 #define sdRdTimeout 200
